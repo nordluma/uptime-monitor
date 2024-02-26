@@ -175,3 +175,29 @@ fn fill_data_gaps(
 
     data
 }
+
+pub async fn delete_website(
+    State(db): State<AppState>,
+    Path(alias): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut tx = db.connection().begin().await?;
+    if let Err(e) = sqlx::query!("DELETE FROM logs WHERE website_alias = $1", &alias)
+        .execute(&mut *tx)
+        .await
+    {
+        tx.rollback().await?;
+        return Err(ApiError::SqlError(e));
+    };
+
+    if let Err(e) = sqlx::query!(r#"DELETE FROM websites WHERE alias = $1"#, alias)
+        .execute(&mut *tx)
+        .await
+    {
+        tx.rollback().await?;
+        return Err(ApiError::SqlError(e));
+    }
+
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
