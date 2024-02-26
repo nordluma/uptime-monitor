@@ -1,6 +1,12 @@
 use anyhow::Context;
+use askama::Template;
 use askama_axum::IntoResponse;
-use axum::{extract::State, http::StatusCode, response::Redirect, Form};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Redirect,
+    Form,
+};
 use chrono::{DateTime, Timelike, Utc};
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -77,7 +83,7 @@ struct WebsiteLogs {
     logs: Vec<WebsiteInfo>,
 }
 
-#[derive(Debug, Validate)]
+#[derive(Debug, Serialize, Validate)]
 struct WebsiteInfo {
     #[validate(url)]
     url: String,
@@ -174,6 +180,62 @@ fn fill_data_gaps(
     }
 
     data
+}
+
+async fn get_monthly_stats(_alias: &str, _db: &PgPool) -> Result<Vec<WebsiteStats>, ApiError> {
+    todo!()
+}
+
+#[derive(Debug, Serialize, FromRow, Template)]
+#[template(path = "single_website.html")]
+struct SingleWebsiteLogs {
+    log: WebsiteInfo,
+    incidents: Vec<Incident>,
+    monthly_data: Vec<WebsiteStats>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct Incident {
+    time: DateTime<Utc>,
+    status: i16,
+}
+
+async fn get_website_alias(
+    State(db): State<AppState>,
+    Path(alias): Path<String>,
+) -> Result<impl askama_axum::IntoResponse, ApiError> {
+    let website = sqlx::query_as!(
+        Website,
+        r#"SELECT url, alias FROM websites WHERE alias = $1"#,
+        alias
+    )
+    .fetch_one(db.connection())
+    .await?;
+
+    let last_24_hours_data = get_daily_stats(&website.alias, db.connection()).await?;
+    let monthly_data = get_monthly_stats(&website.alias, db.connection()).await?;
+
+    let incidents = sqlx::query_as::<_, Incident>(
+        r#"SELECT logs.created_at as time,
+        logs.status FROM logs
+        LEFT JOIN websites ON websites.id = logs.website_id
+        WHERE website.alias = $1 and logs.status != 200"#,
+    )
+    .bind(&alias)
+    .fetch_all(db.connection())
+    .await?;
+
+    let log = WebsiteInfo {
+        url: website.url,
+        alias,
+        data: last_24_hours_data,
+    };
+
+    Ok(SingleWebsiteLogs {
+        log,
+        incidents,
+        monthly_data,
+    })
 }
 
 pub async fn delete_website(
