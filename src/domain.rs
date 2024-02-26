@@ -79,6 +79,8 @@ pub async fn create_website(
     Ok(Redirect::to("/"))
 }
 
+#[derive(Debug, Serialize, FromRow, Template)]
+#[template(path = "index.html")]
 struct WebsiteLogs {
     logs: Vec<WebsiteInfo>,
 }
