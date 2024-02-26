@@ -1,11 +1,10 @@
-use std::time::Duration;
-
 use anyhow::Context;
 use askama_axum::IntoResponse;
 use axum::{extract::State, http::StatusCode, response::Redirect, Form};
+use chrono::{DateTime, Timelike, Utc};
 use futures_util::StreamExt;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{prelude::FromRow, PgPool};
 use tokio::time;
 use validator::Validate;
@@ -20,7 +19,7 @@ pub struct Website {
 }
 
 pub async fn check_websites(db: PgPool) -> anyhow::Result<()> {
-    let mut interval = time::interval(Duration::from_secs(60));
+    let mut interval = time::interval(tokio::time::Duration::from_secs(60));
 
     loop {
         interval.tick().await;
@@ -72,4 +71,107 @@ pub async fn create_website(
     .unwrap();
 
     Ok(Redirect::to("/"))
+}
+
+struct WebsiteLogs {
+    logs: Vec<WebsiteInfo>,
+}
+
+#[derive(Debug, Validate)]
+struct WebsiteInfo {
+    #[validate(url)]
+    url: String,
+    alias: String,
+    data: Vec<WebsiteStats>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct WebsiteStats {
+    time: DateTime<Utc>,
+    uptime_pct: Option<i16>,
+}
+
+async fn get_websites(State(db): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let websites = sqlx::query_as!(Website, r#"SELECT url, alias FROM websites"#)
+        .fetch_all(db.connection())
+        .await?;
+
+    let mut logs = Vec::with_capacity(websites.len());
+    for website in websites {
+        let data = get_daily_stats(&website.alias, db.connection()).await?;
+
+        logs.push(WebsiteInfo {
+            url: website.url,
+            alias: website.alias,
+            data,
+        });
+    }
+
+    Ok(WebsiteLogs { logs })
+}
+
+enum SplitBy {
+    Hour,
+    Day,
+}
+
+async fn get_daily_stats(alias: &str, db: &PgPool) -> Result<Vec<WebsiteStats>, ApiError> {
+    let data = sqlx::query_as::<_, WebsiteStats>(
+        r#"SELECT date_trunc('hour', created_at) as time,
+        CAST(COUNT(case when status = 200 then 1 end) * 100 / COUNT(*) as int2) as uptime_pct
+        FROM logs
+        LEFT JOIN websites on websites.id = logs.website_id
+        WHERE websites.alias = $1
+        GROUP BY time
+        ORDER BY time ASC
+        LIMIT 24
+        "#,
+    )
+    .bind(alias)
+    .fetch_all(db)
+    .await?;
+
+    let number_of_splits = 24;
+    let number_of_seconds = 3600;
+
+    let data = fill_data_gaps(data, number_of_splits, SplitBy::Hour, number_of_seconds);
+
+    Ok(data)
+}
+
+fn fill_data_gaps(
+    mut data: Vec<WebsiteStats>,
+    splits: i32,
+    format: SplitBy,
+    number_of_seconds: i32,
+) -> Vec<WebsiteStats> {
+    if (data.len() as i32) < splits {
+        for i in 1..24 {
+            let time = Utc::now() - chrono::Duration::seconds((number_of_seconds * i).into());
+            let time = time
+                .with_minute(0)
+                .unwrap()
+                .with_second(0)
+                .unwrap()
+                .with_nanosecond(0)
+                .unwrap();
+
+            let time = if matches!(format, SplitBy::Day) {
+                time.with_hour(0).unwrap()
+            } else {
+                time
+            };
+
+            if !data.iter().any(|x| x.time == time) {
+                data.push(WebsiteStats {
+                    time,
+                    uptime_pct: None,
+                });
+            }
+        }
+
+        data.sort_by(|a, b| b.time.cmp(&a.time));
+    }
+
+    data
 }
