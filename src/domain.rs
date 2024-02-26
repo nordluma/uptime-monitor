@@ -147,6 +147,29 @@ async fn get_daily_stats(alias: &str, db: &PgPool) -> Result<Vec<WebsiteStats>, 
     Ok(data)
 }
 
+async fn get_monthly_stats(alias: &str, db: &PgPool) -> Result<Vec<WebsiteStats>, ApiError> {
+    let data = sqlx::query_as::<_, WebsiteStats>(
+        r#"SELECT date_trunc('day', created_at) as time,
+        CAST(COUNT(case when status = 200 then 1 end) * 100 / COUNT(*) AS int2) as uptime_pct
+        FROM logs
+        LEFT JOIN websites ON websites.id = logs.website_id
+        WHERE websites.alias = $1
+        GROUP BY time
+        ORDER BY time ASC
+        LIMIT 30
+        "#,
+    )
+    .bind(alias)
+    .fetch_all(db)
+    .await?;
+
+    let number_of_splits = 30;
+    let number_of_seconds = 86400;
+    let data = fill_data_gaps(data, number_of_splits, SplitBy::Day, number_of_seconds);
+
+    Ok(data)
+}
+
 fn fill_data_gaps(
     mut data: Vec<WebsiteStats>,
     splits: i32,
@@ -182,10 +205,6 @@ fn fill_data_gaps(
     }
 
     data
-}
-
-async fn get_monthly_stats(_alias: &str, _db: &PgPool) -> Result<Vec<WebsiteStats>, ApiError> {
-    todo!()
 }
 
 #[derive(Debug, Serialize, FromRow, Template)]
