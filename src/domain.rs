@@ -1,12 +1,16 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use askama_axum::IntoResponse;
+use axum::{extract::State, http::StatusCode, response::Redirect, Form};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use sqlx::{prelude::FromRow, PgPool};
 use tokio::time;
 use validator::Validate;
+
+use crate::{database::AppState, error::ApiError};
 
 #[derive(Debug, Deserialize, FromRow, Validate)]
 pub struct Website {
@@ -44,4 +48,28 @@ pub async fn check_websites(db: PgPool) -> anyhow::Result<()> {
             .with_context(|| format!("Failed to insert log status for: {}", website.url))?;
         }
     }
+}
+
+pub async fn create_website(
+    State(db): State<AppState>,
+    Form(new_website): Form<Website>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    if new_website.validate().is_err() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Validation Error: please check the URL",
+        ));
+    }
+
+    sqlx::query!(
+        r#"INSERT INTO websites (url, alias) VALUES ($1, $2)"#,
+        new_website.url,
+        new_website.alias
+    )
+    .execute(db.connection())
+    .await
+    .map_err(ApiError::SqlError)
+    .unwrap();
+
+    Ok(Redirect::to("/"))
 }
