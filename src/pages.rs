@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-async fn styles() -> impl IntoResponse {
+pub async fn styles() -> impl IntoResponse {
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/css")
