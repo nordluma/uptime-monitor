@@ -223,7 +223,7 @@ pub struct Incident {
     status: i16,
 }
 
-async fn get_website_alias(
+pub async fn get_website_alias(
     State(db): State<AppState>,
     Path(alias): Path<String>,
 ) -> Result<impl askama_axum::IntoResponse, ApiError> {
