@@ -240,9 +240,10 @@ pub async fn get_website_alias(
 
     let incidents = sqlx::query_as::<_, Incident>(
         r#"SELECT logs.created_at as time,
-        logs.status FROM logs
+        logs.status 
+        FROM logs
         LEFT JOIN websites ON websites.id = logs.website_id
-        WHERE website.alias = $1 and logs.status != 200"#,
+        WHERE websites.alias = $1 and logs.status != 200"#,
     )
     .bind(&alias)
     .fetch_all(db.connection())
