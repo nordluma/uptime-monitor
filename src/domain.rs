@@ -267,9 +267,15 @@ pub async fn delete_website(
     Path(alias): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let mut tx = db.connection().begin().await?;
-    if let Err(e) = sqlx::query!("DELETE FROM logs WHERE website_alias = $1", &alias)
-        .execute(&mut *tx)
-        .await
+    if let Err(e) = sqlx::query!(
+        r#"DELETE FROM logs 
+        WHERE website_id IN (
+            SELECT id FROM websites WHERE alias = $1
+        )"#,
+        &alias
+    )
+    .execute(&mut *tx)
+    .await
     {
         tx.rollback().await?;
         return Err(ApiError::SqlError(e));
