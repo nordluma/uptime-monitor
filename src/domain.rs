@@ -99,7 +99,9 @@ pub struct WebsiteStats {
     uptime_pct: Option<i16>,
 }
 
-async fn get_websites(State(db): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+pub async fn get_websites(
+    State(db): State<AppState>,
+) -> Result<impl askama_axum::IntoResponse, ApiError> {
     let websites = sqlx::query_as!(Website, r#"SELECT url, alias FROM websites"#)
         .fetch_all(db.connection())
         .await?;
